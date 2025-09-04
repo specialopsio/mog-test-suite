@@ -1,0 +1,58 @@
+{
+  "name": "mog-test-suite",
+  "version": "1.0.0",
+  "description": "Comprehensive testing framework for MOG Token smart contract",
+  "main": "index.js",
+  "scripts": {
+    "test": "npx hardhat test",
+    "test:coverage": "npx hardhat coverage",
+    "test:gas": "REPORT_GAS=true npx hardhat test",
+    "test:audit": "npx hardhat test test/AuditFindings.test.js",
+    "test:security": "npx hardhat test test/Security.test.js",
+    "test:main": "npx hardhat test test/MOGToken.test.js",
+    "compile": "npx hardhat compile",
+    "deploy": "npx hardhat run scripts/deploy.js",
+    "node": "npx hardhat node",
+    "clean": "npx hardhat clean"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/specialopsio/mog-test-suite.git"
+  },
+  "keywords": [
+    "hardhat",
+    "ethereum",
+    "smart-contracts",
+    "testing",
+    "MOG",
+    "ERC20",
+    "solidity"
+  ],
+  "author": "SpecialOPS LLC",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/specialopsio/mog-test-suite/issues"
+  },
+  "homepage": "https://github.com/specialopsio/mog-test-suite#readme",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
+    "@nomicfoundation/hardhat-ethers": "^3.0.0",
+    "@nomicfoundation/hardhat-network-helpers": "^1.0.0",
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@nomicfoundation/hardhat-verify": "^2.0.0",
+    "@typechain/ethers-v6": "^0.5.0",
+    "@typechain/hardhat": "^9.0.0",
+    "@types/chai": "^4.2.0",
+    "@types/mocha": ">=9.1.0",
+    "chai": "^4.2.0",
+    "ethers": "^6.4.0",
+    "hardhat": "^2.19.0",
+    "hardhat-gas-reporter": "^1.0.8",
+    "solidity-coverage": "^0.8.0",
+    "typechain": "^8.3.0",
+    "typescript": ">=4.5.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+} 

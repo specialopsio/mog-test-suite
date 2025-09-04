@@ -1,0 +1,94 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [16.x, 18.x]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Compile contracts
+      run: npx hardhat compile
+    
+    - name: Run tests
+      run: npx hardhat test
+    
+    - name: Run tests with gas reporting
+      run: REPORT_GAS=true npx hardhat test
+      env:
+        COINMARKETCAP_API_KEY: ${{ secrets.COINMARKETCAP_API_KEY }}
+    
+    - name: Generate coverage report
+      run: npx hardhat coverage
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage/lcov.info
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Run security tests
+      run: npx hardhat test test/Security.test.js
+    
+    - name: Check for vulnerabilities
+      run: npm audit --audit-level high
+
+  gas-analysis:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Run gas optimization tests
+      run: npx hardhat test test/GasOptimization.test.js
+      env:
+        REPORT_GAS: true
+        COINMARKETCAP_API_KEY: ${{ secrets.COINMARKETCAP_API_KEY }} 
