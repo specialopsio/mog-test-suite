@@ -7,6 +7,7 @@
     "test": "npx hardhat test",
     "test:coverage": "npx hardhat coverage",
     "test:gas": "REPORT_GAS=true npx hardhat test",
+    "test:lp": "npx hardhat test test/LiquidityCustody.test.js",
     "test:audit": "npx hardhat test test/AuditFindings.test.js",
     "test:security": "npx hardhat test test/Security.test.js",
     "test:main": "npx hardhat test test/MOGToken.test.js",
