@@ -1,5 +1,5 @@
 const { expect } = require("chai");
-const { ethers } = require("hardhat");
+const { ethers, network } = require("hardhat");
 const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
 
 describe("MOG Token - Audit Findings Verification", function () {
@@ -8,6 +8,7 @@ describe("MOG Token - Audit Findings Verification", function () {
   let addr1;
   let addr2;
   let addr3;
+  const MAINNET_MOG = "0xaaee1a9723aadb7afa2810263653a34ba2c21c7a";
 
   async function deployMOGTokenFixture() {
     const [owner, addr1, addr2, addr3, ...addrs] = await ethers.getSigners();
@@ -25,6 +26,41 @@ describe("MOG Token - Audit Findings Verification", function () {
     addr1 = fixture.addr1;
     addr2 = fixture.addr2;
     addr3 = fixture.addr3;
+  });
+
+  describe("🔒 Live State (Mainnet Fork)", function () {
+    before(async function () {
+      if (!process.env.MAINNET_RPC_URL) {
+        console.warn("MAINNET_RPC_URL not set. Skipping live-state assertions.");
+        this.skip();
+      }
+      const blockNumberEnv = process.env.BLOCK_NUMBER ? parseInt(process.env.BLOCK_NUMBER, 10) : undefined;
+      const forking = blockNumberEnv
+        ? { jsonRpcUrl: process.env.MAINNET_RPC_URL, blockNumber: blockNumberEnv }
+        : { jsonRpcUrl: process.env.MAINNET_RPC_URL };
+      await network.provider.request({ method: "hardhat_reset", params: [ { forking } ] });
+    });
+
+    it("matches provided current on-chain snapshot", async function () {
+      const MOG = await ethers.getContractFactory("MOG");
+      const live = MOG.attach(MAINNET_MOG);
+
+      expect(await live.owner()).to.equal(ethers.ZeroAddress);
+      expect(await live.getOwner()).to.equal(ethers.ZeroAddress);
+      expect(await live._owner()).to.equal(ethers.ZeroAddress);
+
+      expect(await live.TradingOpen()).to.equal(true);
+      expect(await live.pair()).to.equal("0xc2eaB7d33d3cB97692eCB231A5D0e4A649Cb539d");
+      expect(await live.router()).to.equal("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D");
+
+      expect(await live.showSupply()).to.equal(360447601430949687966814425289995n);
+      expect(await live.swapEnabled()).to.equal(true);
+      expect(await live.swapThreshold()).to.equal(2944830000000000000000000000000n);
+
+      expect(await live.symbol()).to.equal("Mog");
+      expect(await live.totalFee()).to.equal(4n);
+      expect(await live.totalSupply()).to.equal(390570159911439123354797210149241n);
+    });
   });
 
   describe("🔍 Finding 1: Contract Renouncement Risk", function () {
@@ -212,6 +248,19 @@ describe("MOG Token - Audit Findings Verification", function () {
       await mogToken.transfer(addr1.address, ethers.parseUnits("1000", 18));
       expect(await mogToken.balanceOf(addr1.address)).to.equal(ethers.parseUnits("1000", 18));
     });
+
+    it("Post-renounce, deployer stays authorized and fee-exempt (L1)", async function () {
+      // Deployer transfers while TradingOpen=false -> should work due to lingering authorization
+      await mogToken.renounceOwnership();
+      expect(await mogToken.owner()).to.equal(ethers.ZeroAddress);
+
+      const amount = ethers.parseUnits("1000", 18);
+      const balBefore = await mogToken.balanceOf(addr1.address);
+      await mogToken.transfer(addr1.address, amount);
+      const balAfter = await mogToken.balanceOf(addr1.address);
+      // Full amount received (no fees) because deployer remains fee-exempt
+      expect(balAfter - balBefore).to.equal(amount);
+    });
   });
 
   describe("🔍 Finding 5: Wallet and Transaction Limits", function () {
@@ -254,6 +303,29 @@ describe("MOG Token - Audit Findings Verification", function () {
         mogToken.transfer(addr1.address, maxWallet + ethers.parseUnits("1", 18))
       ).to.be.revertedWith("Total Holding is currently limited, you can not buy that much.");
     });
+
+    it("ZERO address exempt from max-wallet due to init order (L2)", async function () {
+      // Make wallet limit tighter than tx limit so we can exceed wallet but not tx
+      const totalSupply = await mogToken.totalSupply();
+      await mogToken.maxWalletRule(1); // 0.1% of supply
+      const newMaxWallet = await mogToken._maxWalletToken();
+      const maxTx = await mogToken._maxTxAmount(); // still 1%
+
+      // Amount: between newMaxWallet and maxTx
+      const amount = newMaxWallet + (1n * 10n ** 18n);
+      expect(amount).to.be.lt(maxTx);
+
+      // Need TradingOpen for non-authorized addr1 to receive
+      await mogToken.startTrading();
+
+      // Transfer over-wallet amount to addr1 should revert
+      await expect(
+        mogToken.transfer(addr1.address, amount)
+      ).to.be.revertedWith("Total Holding is currently limited, you can not buy that much.");
+
+      // Transfer same amount to ZERO should bypass wallet limit because ZERO was exempted
+      await mogToken.transfer(ethers.ZeroAddress, amount);
+    });
   });
 
   describe("🔍 Finding 6: Burn Mechanism and Supply Reduction", function () {
@@ -275,30 +347,115 @@ describe("MOG Token - Audit Findings Verification", function () {
       expect(finalSupply).to.be.lt(initialSupply);
     });
 
-    it("Should confirm burn tokens are sent to DEAD address and total supply is reduced", async function () {
+    it("Burn/event mismatch: DEAD balance increases while ZERO burn event emitted", async function () {
       await mogToken.startTrading();
-      
+
       const DEAD = "0x000000000000000000000000000000000000dEaD";
-      const initialDeadBalance = await mogToken.balanceOf(DEAD);
-      const initialSupply = await mogToken.totalSupply();
-      
-      // Give tokens and transfer to trigger burn
+      const ZERO = ethers.ZeroAddress;
+
+      // Prepare balances
       await mogToken.transfer(addr1.address, ethers.parseUnits("10000", 18));
-      await mogToken.connect(addr1).transfer(addr2.address, ethers.parseUnits("1000", 18));
-      
-      const finalDeadBalance = await mogToken.balanceOf(DEAD);
+
+      const initialSupply = await mogToken.totalSupply();
+      const initialDeadBalance = await mogToken.balanceOf(DEAD);
+
+      const tx = await mogToken.connect(addr1).transfer(addr2.address, ethers.parseUnits("1000", 18));
+      const receipt = await tx.wait();
+
+      // Supply reduced
       const finalSupply = await mogToken.totalSupply();
-      
-      // DEAD address balance should increase
-      expect(finalDeadBalance).to.be.gt(initialDeadBalance);
-      
-      // Total supply should decrease
       expect(finalSupply).to.be.lt(initialSupply);
-      
-      // The amount burned should equal the increase in DEAD balance
-      const burnedAmount = finalDeadBalance - initialDeadBalance;
-      const supplyReduction = initialSupply - finalSupply;
-      expect(burnedAmount).to.equal(supplyReduction);
+
+      // DEAD balance increased (credited in takeFee)
+      const finalDeadBalance = await mogToken.balanceOf(DEAD);
+      expect(finalDeadBalance).to.be.gt(initialDeadBalance);
+
+      // An event to ZERO must exist
+      let sawZeroBurn = false;
+      for (const log of receipt.logs) {
+        try {
+          const parsed = mogToken.interface.parseLog(log);
+          if (parsed.name === "Transfer" && parsed.args[1] === ZERO) {
+            sawZeroBurn = true;
+          }
+        } catch (_) {}
+      }
+      expect(sawZeroBurn).to.equal(true);
+
+      // No event to DEAD should be emitted for the burn credit
+      let sawDeadCredit = false;
+      for (const log of receipt.logs) {
+        try {
+          const parsed = mogToken.interface.parseLog(log);
+          if (parsed.name === "Transfer" && parsed.args[1] === DEAD) {
+            sawDeadCredit = true;
+          }
+        } catch (_) {}
+      }
+      expect(sawDeadCredit).to.equal(false);
+    });
+
+    it("Sum of balances can exceed totalSupply due to inconsistent burn accounting (H1)", async function () {
+      await mogToken.startTrading();
+      const DEAD = "0x000000000000000000000000000000000000dEaD";
+      const self = await mogToken.getAddress();
+
+      // Fund addr1 and perform a taxed transfer
+      await mogToken.transfer(addr1.address, ethers.parseUnits("10000", 18));
+      const supplyBefore = await mogToken.totalSupply();
+
+      await mogToken.connect(addr1).transfer(addr2.address, ethers.parseUnits("1000", 18));
+
+      // Sum balances of known non-zero holders
+      const balances = await Promise.all([
+        mogToken.balanceOf(owner.address),
+        mogToken.balanceOf(addr1.address),
+        mogToken.balanceOf(addr2.address),
+        mogToken.balanceOf(self),
+        mogToken.balanceOf(DEAD)
+      ]);
+      const sumBalances = balances.reduce((a, b) => a + b, 0n);
+      const supplyAfter = await mogToken.totalSupply();
+
+      // Invariant violation: sum(balances) > totalSupply
+      expect(sumBalances).to.be.gt(supplyAfter);
+      // And relative increase equals the DEAD credit roughly (non-zero)
+      expect(sumBalances - supplyAfter).to.be.gt(0n);
+    });
+  });
+
+  describe("🔍 Indexer divergence from events-only reconstruction", function () {
+    it("Events-only parsing undercounts DEAD and diverges from balanceOf", async function () {
+      await mogToken.startTrading();
+      const ZERO = ethers.ZeroAddress;
+      const DEAD = "0x000000000000000000000000000000000000dEaD";
+
+      await mogToken.transfer(addr1.address, ethers.parseUnits("10000", 18));
+      const tx = await mogToken.connect(addr1).transfer(addr2.address, ethers.parseUnits("1000", 18));
+      const receipt = await tx.wait();
+
+      const eventBalances = new Map();
+      const credit = (a, v) => eventBalances.set(a, (eventBalances.get(a) || 0n) + v);
+      const debit = (a, v) => eventBalances.set(a, (eventBalances.get(a) || 0n) - v);
+
+      for (const log of receipt.logs) {
+        try {
+          const parsed = mogToken.interface.parseLog(log);
+          if (parsed.name === "Transfer") {
+            const from = parsed.args[0];
+            const to = parsed.args[1];
+            const value = parsed.args[2];
+            if (from !== ZERO) debit(from, value);
+            if (to !== ZERO) credit(to, value);
+          }
+        } catch (_) {}
+      }
+
+      const deadDeltaFromEvents = eventBalances.get(DEAD) || 0n;
+      const deadBalanceOnChain = await mogToken.balanceOf(DEAD);
+
+      expect(deadBalanceOnChain).to.be.gt(0n);
+      expect(deadDeltaFromEvents).to.equal(0n);
     });
   });
 
@@ -322,12 +479,21 @@ describe("MOG Token - Audit Findings Verification", function () {
       expect(finalBalance).to.be.gt(initialBalance);
     });
 
-    it("Should confirm clearStuckToken() can be called by anyone", async function () {
-      // Function should be callable by anyone (though may fail if no tokens to clear)
-      await mogToken.connect(addr1).clearStuckToken(ethers.ZeroAddress, 0);
-      
-      // Should not revert due to access control
-      // (May revert for other reasons like no tokens to transfer)
+    it("Should confirm clearStuckToken() can be called by anyone and sweeps ERC20 to autoLiquidityReceiver", async function () {
+      // Deploy a test ERC20 and send tokens to the MOG contract
+      const TestERC20 = await ethers.getContractFactory("TestERC20");
+      const tst = await TestERC20.deploy();
+      await tst.mint(owner.address, ethers.parseUnits("1000", 18));
+      await tst.transfer(await mogToken.getAddress(), ethers.parseUnits("250", 18));
+
+      const autoLiquidityReceiver = owner.address; // defaults to deployer in constructor
+      const before = await tst.balanceOf(autoLiquidityReceiver);
+
+      // Anyone can trigger the sweep to autoLiquidityReceiver
+      await mogToken.connect(addr1).clearStuckToken(await tst.getAddress(), 0);
+
+      const after = await tst.balanceOf(autoLiquidityReceiver);
+      expect(after).to.be.gt(before);
     });
   });
 
