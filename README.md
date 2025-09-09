@@ -50,6 +50,9 @@ npx hardhat test test/Security.test.js
 # Run main functionality tests
 npx hardhat test test/MOGToken.test.js
 
+# Run liquidity pool tests
+npx hardhat test test/LiquidityCustody.test.js
+
 # Run tests with gas reporting
 REPORT_GAS=true npx hardhat test
 
