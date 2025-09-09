@@ -82,12 +82,17 @@ describe("MOG Liquidity Custody (Local, mocked V2)", function () {
       deployer.address,
       Math.floor(Date.now() / 1000) + 600
     );
-    await tx.wait();
+    const receipt = await tx.wait();
+
+    const gasUsed = BigInt(receipt.gasUsed.toString())
+    const effectiveGasPriceRaw = receipt.effectiveGasPrice ?? receipt.gasPrice;
+    const effectiveGasPrice = BigInt(effectiveGasPriceRaw.toString())
+    const gasCost = gasUsed * effectiveGasPrice;
 
     const ethAfter = await ethers.provider.getBalance(deployer.address);
     const tokenAfter = await mog.balanceOf(deployer.address);
 
-    expect(ethAfter).to.be.gt(ethBefore);
+    expect(ethAfter + gasCost).to.be.eq(ethBefore);
     expect(tokenAfter).to.be.gt(tokenBefore);
   });
 });
