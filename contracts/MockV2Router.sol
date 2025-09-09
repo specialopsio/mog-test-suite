@@ -54,6 +54,40 @@ contract MockV2Router {
         (bool ok,) = payable(to).call{value: 1 wei}("");
         ok;
     }
+
+    function removeLiquidityETH(
+        address token,
+        uint liquidity,
+        uint amountTokenMin,
+        uint amountETHMin,
+        address to,
+        uint deadline
+    ) external returns (uint amountToken, uint amountETH) {
+        require(deadline >= block.timestamp, "expired");
+        address pair = factory.getPair(token, WETH);
+        require(pair != address(0), "no pair");
+
+        // Pull LP from caller into pair and burn
+        MockV2Pair(pair).transferFrom(msg.sender, pair, liquidity);
+        MockV2Pair(pair).burn(pair, liquidity);
+
+        // Payout tokens from pair balance
+        uint tokenBal = IERC20(token).balanceOf(pair);
+        amountToken = tokenBal < liquidity ? tokenBal : liquidity;
+        require(amountToken >= amountTokenMin, "token min");
+        if (amountToken > 0) {
+            MockV2Pair(pair).payout(token, to, amountToken);
+        }
+
+        // Payout ETH from router balance (mock behavior)
+        uint ethBal = address(this).balance;
+        amountETH = ethBal < liquidity ? ethBal : liquidity;
+        require(amountETH >= amountETHMin, "eth min");
+        if (amountETH > 0) {
+            (bool sent,) = payable(to).call{value: amountETH}("");
+            require(sent, "eth send");
+        }
+    }
 }
 
 
